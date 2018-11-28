@@ -777,7 +777,7 @@ public class Level implements ChunkManager, Metadatable {
 
         TimingsHistory.tileEntityTicks += this.updateBlockEntities.size();
         this.timings.blockEntityTick.startTiming();
-        this.updateBlockEntities.removeIf(blockEntity -> !blockEntity.onUpdate());
+        this.updateBlockEntities.removeIf(blockEntity -> !blockEntity.isValid() || !blockEntity.onUpdate());
         this.timings.blockEntityTick.stopTiming();
 
         this.timings.tickChunks.startTiming();
@@ -1165,9 +1165,9 @@ public class Level implements ChunkManager, Metadatable {
 
     public void updateAroundRedstone(Vector3 pos, BlockFace face) {
         for (BlockFace side : BlockFace.values()) {
-            /*if(face != null && side == face) {
+            if (face != null && side == face) {
                 continue;
-            }*/
+            }
 
             this.getBlock(pos.getSide(side)).onUpdate(BLOCK_UPDATE_REDSTONE);
         }
@@ -1983,7 +1983,7 @@ public class Level implements ChunkManager, Metadatable {
             return null;
         }
 
-        if (player != null && !player.hasInteracted.get()) {
+        if (player != null) {
             PlayerInteractEvent ev = new PlayerInteractEvent(player, item, target, face,
                     target.getId() == 0 ? Action.RIGHT_CLICK_AIR : Action.RIGHT_CLICK_BLOCK);
 
@@ -2002,8 +2002,6 @@ public class Level implements ChunkManager, Metadatable {
 
             this.server.getPluginManager().callEvent(ev);
             if (!ev.isCancelled()) {
-                player.hasInteracted.set(true);
-                server.getScheduler().scheduleDelayedTask(() -> player.hasInteracted.compareAndSet(true, false), 4);
                 target.onUpdate(BLOCK_UPDATE_TOUCH);
                 if ((!player.isSneaking() || player.getInventory().getItemInHand().isNull()) && target.canBeActivated() && target.onActivate(item, player)) {
                     if (item.isTool() && item.getDamage() >= item.getMaxDurability()) {
@@ -2021,8 +2019,7 @@ public class Level implements ChunkManager, Metadatable {
             } else {
                 return null;
             }
-
-        } else if (target.canBeActivated() && target.onActivate(item, null)) {
+        } else if (target.canBeActivated() && target.onActivate(item, player)) {
             if (item.isTool() && item.getDamage() >= item.getMaxDurability()) {
                 item = new ItemBlock(new BlockAir(), 0, 0);
             }
@@ -2635,7 +2632,9 @@ public class Level implements ChunkManager, Metadatable {
     public void scheduleBlockEntityUpdate(BlockEntity entity) {
         Preconditions.checkNotNull(entity, "entity");
         Preconditions.checkArgument(entity.getLevel() == this, "BlockEntity is not in this level");
-        updateBlockEntities.add(entity);
+        if (!updateBlockEntities.contains(entity)) {
+            updateBlockEntities.add(entity);
+        }
     }
 
     public void removeBlockEntity(BlockEntity entity) {
@@ -3301,38 +3300,48 @@ public class Level implements ChunkManager, Metadatable {
 
     public int getStrongPower(Vector3 pos) {
         int i = 0;
-        i = Math.max(i, this.getStrongPower(pos.down(), BlockFace.DOWN));
 
-        if (i >= 15) {
-            return i;
-        } else {
-            i = Math.max(i, this.getStrongPower(pos.up(), BlockFace.UP));
+        for (BlockFace face : BlockFace.values()) {
+            i = Math.max(i, this.getStrongPower(pos.getSide(face), face));
 
             if (i >= 15) {
                 return i;
-            } else {
-                i = Math.max(i, this.getStrongPower(pos.north(), BlockFace.NORTH));
-
-                if (i >= 15) {
-                    return i;
-                } else {
-                    i = Math.max(i, this.getStrongPower(pos.south(), BlockFace.SOUTH));
-
-                    if (i >= 15) {
-                        return i;
-                    } else {
-                        i = Math.max(i, this.getStrongPower(pos.west(), BlockFace.WEST));
-
-                        if (i >= 15) {
-                            return i;
-                        } else {
-                            i = Math.max(i, this.getStrongPower(pos.east(), BlockFace.EAST));
-                            return i >= 15 ? i : i;
-                        }
-                    }
-                }
             }
         }
+
+        return i;
+//        i = Math.max(i, this.getStrongPower(pos.down(), BlockFace.DOWN));
+//
+//        if (i >= 15) {
+//            return i;
+//        } else {
+//            i = Math.max(i, this.getStrongPower(pos.up(), BlockFace.UP));
+//
+//            if (i >= 15) {
+//                return i;
+//            } else {
+//                i = Math.max(i, this.getStrongPower(pos.north(), BlockFace.NORTH));
+//
+//                if (i >= 15) {
+//                    return i;
+//                } else {
+//                    i = Math.max(i, this.getStrongPower(pos.south(), BlockFace.SOUTH));
+//
+//                    if (i >= 15) {
+//                        return i;
+//                    } else {
+//                        i = Math.max(i, this.getStrongPower(pos.west(), BlockFace.WEST));
+//
+//                        if (i >= 15) {
+//                            return i;
+//                        } else {
+//                            i = Math.max(i, this.getStrongPower(pos.east(), BlockFace.EAST));
+//                            return i >= 15 ? i : i;
+//                        }
+//                    }
+//                }
+//            }
+//        }
     }
 
     public boolean isSidePowered(Vector3 pos, BlockFace face) {
@@ -3345,7 +3354,13 @@ public class Level implements ChunkManager, Metadatable {
     }
 
     public boolean isBlockPowered(Vector3 pos) {
-        return this.getRedstonePower(pos.north(), BlockFace.NORTH) > 0 || this.getRedstonePower(pos.south(), BlockFace.SOUTH) > 0 || this.getRedstonePower(pos.west(), BlockFace.WEST) > 0 || this.getRedstonePower(pos.east(), BlockFace.EAST) > 0 || this.getRedstonePower(pos.down(), BlockFace.DOWN) > 0 || this.getRedstonePower(pos.up(), BlockFace.UP) > 0;
+        for (BlockFace face : BlockFace.values()) {
+            if (this.getRedstonePower(pos.getSide(face), face) > 0) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public int isBlockIndirectlyGettingPowered(Vector3 pos) {
